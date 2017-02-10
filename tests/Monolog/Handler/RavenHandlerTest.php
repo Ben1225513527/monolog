@@ -14,16 +14,21 @@ namespace Monolog\Handler;
 use Monolog\Test\TestCase;
 use Monolog\Logger;
 use Monolog\Formatter\LineFormatter;
+use Raven_Client;
 
 class RavenHandlerTest extends TestCase
 {
     public function setUp()
     {
         if (!class_exists('Raven_Client')) {
-            $this->markTestSkipped('raven/raven not installed');
+            $this->markTestSkipped('sentry/sentry not installed');
         }
 
-        require_once __DIR__ . '/MockRavenClient.php';
+        if (version_compare(Raven_Client::VERSION, '0.16.0', '>=')) {
+            require_once __DIR__ . '/MockRavenClient-gte-0-16-0.php';
+        } else {
+            require_once __DIR__ . '/MockRavenClient.php';
+        }
     }
 
     /**
@@ -195,6 +200,32 @@ class RavenHandlerTest extends TestCase
             ->getMock();
         $handler->expects($this->never())->method('handle');
         $handler->setLevel(Logger::ERROR);
+        $handler->handleBatch($records);
+    }
+
+    public function testHandleBatchPicksProperMessage()
+    {
+        $records = array(
+            $this->getRecord(Logger::DEBUG, 'debug message 1'),
+            $this->getRecord(Logger::DEBUG, 'debug message 2'),
+            $this->getRecord(Logger::INFO, 'information 1'),
+            $this->getRecord(Logger::ERROR, 'error 1'),
+            $this->getRecord(Logger::WARNING, 'warning'),
+            $this->getRecord(Logger::ERROR, 'error 2'),
+            $this->getRecord(Logger::INFO, 'information 2'),
+        );
+
+        $logFormatter = $this->createMock('Monolog\\Formatter\\FormatterInterface');
+        $logFormatter->expects($this->once())->method('formatBatch');
+
+        $formatter = $this->createMock('Monolog\\Formatter\\FormatterInterface');
+        $formatter->expects($this->once())->method('format')->with($this->callback(function ($record) use ($records) {
+            return $record['message'] == 'error 1';
+        }));
+
+        $handler = $this->getHandler($this->getRavenClient());
+        $handler->setBatchFormatter($logFormatter);
+        $handler->setFormatter($formatter);
         $handler->handleBatch($records);
     }
 
